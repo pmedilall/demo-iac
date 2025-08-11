@@ -1,0 +1,83 @@
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  vars:
+    target_ns: "{{ target_ns | default('demo-dev') }}"
+    app_name: airport-greeting-app
+    image_ref: "nginx:alpine"
+  tasks:
+    - name: Airport landing page (env aware)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata: { name: "{{ app_name }}-web", namespace: "{{ target_ns }}" }
+          data:
+            index.html: |
+              <!doctype html>
+              <html>
+              <head>
+                <title>{{ target_ns | upper }} Airport</title>
+                <meta charset="utf-8"/>
+                <style>
+                  body{font-family:system-ui;margin:0;padding:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:white}
+                  .card{background:#111827;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:32px;text-align:center}
+                  h1{margin:0 0 8px;font-size:28px}
+                  p{margin:0;opacity:.8}
+                </style>
+              </head>
+              <body>
+                <div class="card">
+                  <h1>✈️ Welcome to {{ target_ns | upper }} Airport</h1>
+                  <p>Deployed by Ansible Automation Platform</p>
+                </div>
+              </body>
+              </html>
+
+    - name: Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          spec:
+            replicas: 2
+            selector: { matchLabels: { app: "{{ app_name }}" } }
+            template:
+              metadata: { labels: { app: "{{ app_name }}" } }
+              spec:
+                containers:
+                  - name: web
+                    image: "{{ image_ref }}"
+                    ports: [{containerPort: 80}]
+                    volumeMounts:
+                      - name: web
+                        mountPath: /usr/share/nginx/html/index.html
+                        subPath: index.html
+                volumes:
+                  - name: web
+                    configMap:
+                      name: "{{ app_name }}-web"
+
+    - name: Service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          spec:
+            selector: { app: "{{ app_name }}" }
+            ports: [{ port: 80, targetPort: 80 }]
+
+    - name: Route (OpenShift)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: route.openshift.io/v1
+          kind: Route
+          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          spec:
+            to: { kind: Service, name: "{{ app_name }}" }
