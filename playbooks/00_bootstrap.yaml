@@ -1,0 +1,28 @@
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  vars:
+    namespaces: ["demo-dev","demo-stage","demo-prod"]
+  tasks:
+    - name: Ensure namespaces exist
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata: { name: "{{ item }}" }
+      loop: "{{ namespaces }}"
+
+    - name: Add a small quota (demo)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ResourceQuota
+          metadata: { name: standard, namespace: "{{ item }}" }
+          spec:
+            hard:
+              pods: "30"
+              requests.cpu: "6"
+              requests.memory: "24Gi"
+      loop: "{{ namespaces }}"
