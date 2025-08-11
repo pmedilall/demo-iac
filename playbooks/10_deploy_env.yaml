@@ -1,10 +1,16 @@
+---
 - hosts: localhost
   gather_facts: false
   collections: [kubernetes.core]
   vars:
-    target_ns: "{{ target_ns | default('demo-dev') }}"
     app_name: airport-greeting-app
     image_ref: "nginx:alpine"
+
+  pre_tasks:
+    - name: Resolve target namespace with default
+      ansible.builtin.set_fact:
+        ns: "{{ target_ns | default('demo-dev') }}"
+
   tasks:
     - name: Airport landing page (env aware)
       kubernetes.core.k8s:
@@ -12,13 +18,13 @@
         definition:
           apiVersion: v1
           kind: ConfigMap
-          metadata: { name: "{{ app_name }}-web", namespace: "{{ target_ns }}" }
+          metadata: { name: "{{ app_name }}-web", namespace: "{{ ns }}" }
           data:
             index.html: |
               <!doctype html>
               <html>
               <head>
-                <title>{{ target_ns | upper }} Airport</title>
+                <title>{{ ns | upper }} Airport</title>
                 <meta charset="utf-8"/>
                 <style>
                   body{font-family:system-ui;margin:0;padding:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:white}
@@ -29,7 +35,7 @@
               </head>
               <body>
                 <div class="card">
-                  <h1>✈️ Welcome to {{ target_ns | upper }} Airport</h1>
+                  <h1>✈️ Welcome to {{ ns | upper }} Airport</h1>
                   <p>Deployed by Ansible Automation Platform</p>
                 </div>
               </body>
@@ -41,7 +47,7 @@
         definition:
           apiVersion: apps/v1
           kind: Deployment
-          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
           spec:
             replicas: 2
             selector: { matchLabels: { app: "{{ app_name }}" } }
@@ -67,7 +73,7 @@
         definition:
           apiVersion: v1
           kind: Service
-          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
           spec:
             selector: { app: "{{ app_name }}" }
             ports: [{ port: 80, targetPort: 80 }]
@@ -78,6 +84,6 @@
         definition:
           apiVersion: route.openshift.io/v1
           kind: Route
-          metadata: { name: "{{ app_name }}", namespace: "{{ target_ns }}" }
+          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
           spec:
             to: { kind: Service, name: "{{ app_name }}" }
