@@ -1,0 +1,36 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  tasks:
+    - name: Get ComplianceScans
+      kubernetes.core.k8s_info:
+        api_version: compliance.openshift.io/v1alpha1
+        kind: ComplianceScan
+      register: scans
+
+    - name: Get ComplianceSuite(s)
+      kubernetes.core.k8s_info:
+        api_version: compliance.openshift.io/v1alpha1
+        kind: ComplianceSuite
+      register: suites
+
+    - name: Print high-level summary
+      ansible.builtin.debug:
+        msg: >
+          Scans: {{
+            scans.resources | map(attribute='metadata.name') | list
+          }},
+          Suites: {{
+            suites.resources | map(attribute='metadata.name') | list
+          }}
+
+    - name: Get check results (may be many; filter to fail)
+      kubernetes.core.k8s_info:
+        api_version: compliance.openshift.io/v1alpha1
+        kind: ComplianceCheckResult
+      register: checks
+
+    - name: Show top 20 failed checks (if any)
+      ansible.builtin.debug:
+        var: (checks.resources | selectattr('status.result','equalto','FAIL') | map(attribute='metadata.name') | list)[:20]
