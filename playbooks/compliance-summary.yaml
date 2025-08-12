@@ -1,0 +1,24 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  tasks:
+    - name: Get ComplianceSuite objects
+      kubernetes.core.k8s_info:
+        api_version: compliance.openshift.io/v1alpha1
+        kind: ComplianceSuite
+      register: suites
+
+    - name: Show suites found
+      debug:
+        msg: "{{ suites.resources | map(attribute='metadata.name') | list }}"
+
+    - name: Get check results
+      kubernetes.core.k8s_info:
+        api_version: compliance.openshift.io/v1alpha1
+        kind: ComplianceCheckResult
+      register: checks
+
+    - name: Top 20 FAILED checks
+      debug:
+        var: (checks.resources | selectattr('status.result','equalto','FAIL') | map(attribute='metadata.name') | list)[:20]
