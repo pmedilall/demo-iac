@@ -1,0 +1,64 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  vars:
+    app_name: airport-greeting-app
+    ns: "{{ target_ns | default('demo-dev') }}"
+    new_image: "nginxinc/nginx-unprivileged:stable-alpine-slim"  # example newer tag
+  tasks:
+    - name: Patch deployment image to a newer (patched) tag
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ ns }}"
+          spec:
+            replicas: 2
+            selector: { matchLabels: { app: "{{ app_name }}" } }
+            template:
+              metadata: { labels: { app: "{{ app_name }}" } }
+              spec:
+                securityContext: { runAsNonRoot: true }
+                containers:
+                  - name: web
+                    image: "{{ new_image }}"
+                    ports: [{ containerPort: 8080 }]
+                    resources:
+                      requests: { cpu: "100m", memory: "128Mi" }
+                      limits:   { cpu: "250m", memory: "256Mi" }
+                    volumeMounts:
+                      - name: web
+                        mountPath: /usr/share/nginx/html/index.html
+                        subPath: index.html
+                volumes:
+                  - name: web
+                    configMap:
+                      name: "{{ app_name }}-web"
+
+    - name: Wait for rollout complete
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ ns }}"
+      register: d
+      until: d.resources[0].status.readyReplicas|default(0) == d.resources[0].status.replicas|default(-1)
+      retries: 30
+      delay: 3
+
+    - name: Annotate deployment with “patched-by”
+      kubernetes.core.k8s:
+        state: patched
+        kind: Deployment
+        api_version: apps/v1
+        name: "{{ app_name }}"
+        namespace: "{{ ns }}"
+        definition:
+          metadata:
+            annotations:
+              demo/patched-by: "AAP"
+              demo/reason: "CVE-fix simulation"
