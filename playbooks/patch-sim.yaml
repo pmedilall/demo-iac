@@ -1,0 +1,69 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  vars:
+    # promptable in JT (default shown)
+    target_ns: "{{ target_ns | default('demo-dev') }}"
+    sim_pod: patch-sim
+    package: openssl
+
+  tasks:
+    - name: Create UBI pod
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata: { name: "{{ sim_pod }}", namespace: "{{ target_ns }}" }
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: ubi
+                image: registry.access.redhat.com/ubi9/ubi
+                command: ["sleep","3600"]
+
+    - name: Wait until pod is Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: "{{ sim_pod }}"
+        namespace: "{{ target_ns }}"
+      register: podinfo
+      until: podinfo.resources | length > 0 and (podinfo.resources[0].status.containerStatuses[0].ready | default(false))
+      retries: 30
+      delay: 2
+
+    - name: Version before
+      kubernetes.core.k8s_exec:
+        namespace: "{{ target_ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["bash","-lc","rpm -q {{ package }} || true"]
+      register: before
+
+    - name: Update package (simulate remediation)
+      kubernetes.core.k8s_exec:
+        namespace: "{{ target_ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["bash","-lc","microdnf -y update {{ package }} || dnf -y update {{ package }} || true"]
+
+    - name: Version after
+      kubernetes.core.k8s_exec:
+        namespace: "{{ target_ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["bash","-lc","rpm -q {{ package }} || true"]
+      register: after
+
+    - debug:
+        msg: |
+          Namespace: {{ target_ns }}
+          Before:    {{ before.stdout }}
+          After:     {{ after.stdout }}
+
+    - name: Clean up pod
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Pod
+        name: "{{ sim_pod }}"
+        namespace: "{{ target_ns }}"
