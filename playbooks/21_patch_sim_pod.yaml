@@ -1,0 +1,69 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  vars:
+    ns: demo-dev
+    sim_pod: patch-sim
+  tasks:
+    - name: Create UBI test pod
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: "{{ sim_pod }}"
+            namespace: "{{ ns }}"
+            labels: { app: patch-sim }
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: ubi
+                image: registry.access.redhat.com/ubi9/ubi
+                command: ["sleep","3600"]
+
+    - name: Wait for pod Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: "{{ sim_pod }}"
+        namespace: "{{ ns }}"
+      register: podinfo
+      until: podinfo.resources | length > 0 and (podinfo.resources[0].status.containerStatuses[0].ready | default(false))
+      retries: 30
+      delay: 2
+
+    - name: Show current openssl rpm (before)
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["rpm","-q","openssl"]
+      register: rpm_before
+
+    - name: Update openssl (simulate remediation)
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["bash","-lc","microdnf -y update openssl || dnf -y update openssl || true"]
+
+    - name: Show current openssl rpm (after)
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ns }}"
+        pod: "{{ sim_pod }}"
+        command: ["rpm","-q","openssl"]
+      register: rpm_after
+
+    - name: Print delta
+      ansible.builtin.debug:
+        msg: |
+          Before: {{ rpm_before.stdout }}
+          After : {{ rpm_after.stdout }}
+
+    - name: Cleanup pod
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Pod
+        name: "{{ sim_pod }}"
+        namespace: "{{ ns }}"
