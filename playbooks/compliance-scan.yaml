@@ -1,0 +1,35 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections: [kubernetes.core]
+  tasks:
+    - name: Ensure Compliance Operator subscription
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: compliance-operator
+            namespace: openshift-operators
+          spec:
+            channel: stable
+            name: compliance-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+
+    - name: Start CIS suite (ocp4-cis)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: compliance.openshift.io/v1alpha1
+          kind: ScanSettingBinding
+          metadata: { name: cis-scan }
+          profiles:
+            - apiGroup: compliance.openshift.io/v1alpha1
+              kind: Profile
+              name: ocp4-cis
+          settingsRef:
+            apiGroup: compliance.openshift.io/v1alpha1
+            kind: ScanSetting
+            name: default
