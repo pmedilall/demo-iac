@@ -3,64 +3,79 @@
   gather_facts: false
   collections: [kubernetes.core]
   vars:
-    # promptable in JT (default shown)
     target_ns: "{{ target_ns | default('demo-dev') }}"
     sim_pod: patch-sim
     package: openssl
 
   tasks:
-    - name: Create UBI pod
+    - name: Create UBI test pod (with requests/limits)
       kubernetes.core.k8s:
         state: present
         definition:
           apiVersion: v1
           kind: Pod
-          metadata: { name: "{{ sim_pod }}", namespace: "{{ target_ns }}" }
+          metadata:
+            name: "{{ sim_pod }}"
+            namespace: "{{ target_ns }}"
+            labels: { app: patch-sim }
           spec:
             restartPolicy: Never
+            securityContext:
+              runAsNonRoot: true
             containers:
               - name: ubi
                 image: registry.access.redhat.com/ubi9/ubi
                 command: ["sleep","3600"]
+                resources:
+                  requests:
+                    cpu: "100m"
+                    memory: "128Mi"
+                  limits:
+                    cpu: "250m"
+                    memory: "256Mi"
 
-    - name: Wait until pod is Ready
+    - name: Wait for pod Ready
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
         name: "{{ sim_pod }}"
         namespace: "{{ target_ns }}"
       register: podinfo
-      until: podinfo.resources | length > 0 and (podinfo.resources[0].status.containerStatuses[0].ready | default(false))
+      until: >
+        (podinfo.resources | length > 0) and
+        (podinfo.resources[0].status.containerStatuses is defined) and
+        (podinfo.resources[0].status.containerStatuses[0].ready | default(false))
       retries: 30
       delay: 2
 
-    - name: Version before
+    - name: Show {{ package }} version (before)
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
         command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: before
 
-    - name: Update package (simulate remediation)
+    - name: Update {{ package }} (simulate remediation)
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
         command: ["bash","-lc","microdnf -y update {{ package }} || dnf -y update {{ package }} || true"]
 
-    - name: Version after
+    - name: Show {{ package }} version (after)
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
         command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: after
 
-    - debug:
+    - name: Print delta
+      ansible.builtin.debug:
         msg: |
           Namespace: {{ target_ns }}
-          Before:    {{ before.stdout }}
-          After:     {{ after.stdout }}
+          Before: {{ before.stdout }}
+          After : {{ after.stdout }}
 
-    - name: Clean up pod
+    - name: Cleanup pod
       kubernetes.core.k8s:
         state: absent
         api_version: v1
