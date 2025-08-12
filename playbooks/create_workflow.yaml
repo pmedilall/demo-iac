@@ -1,0 +1,158 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - ansible.controller
+
+  vars:
+    org: "Default"
+    workflow_name: "Patch & Compliance Promotion"
+
+    # ⬇️ Your existing Job Template names (must already exist)
+    jt_patch_sim: "Patch Sim"
+    jt_compliance_scan: "Compliance Scan"
+    jt_compliance_summary: "Compliance Summary"
+    jt_patch_app: "Patch App Dev/Stage/Prod"
+
+    # Namespace names per stage
+    ns_dev: "demo-dev"
+    ns_stage: "demo-stage"
+    ns_prod: "demo-prod"
+
+  tasks:
+    - name: Create / ensure Workflow Job Template
+      controller_workflow_job_template:
+        name: "{{ workflow_name }}"
+        organization: "{{ org }}"
+        allow_simultaneous: false
+        survey_enabled: false
+      register: wjt
+
+    # --- First three nodes: Patch Sim -> Compliance Scan -> Compliance Summary
+    - name: Node - Patch Sim
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_patch_sim }}"
+      register: node_patch_sim
+
+    - name: Node - Compliance Scan
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_compliance_scan }}"
+      register: node_scan
+
+    - name: Link Patch Sim -> Compliance Scan
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_patch_sim.identifier }}"
+        success_nodes:
+          - "{{ node_scan.identifier }}"
+
+    - name: Node - Compliance Summary
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_compliance_summary }}"
+      register: node_summary
+
+    - name: Link Compliance Scan -> Compliance Summary
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_scan.identifier }}"
+        success_nodes:
+          - "{{ node_summary.identifier }}"
+
+    # --- Approval before Dev
+    - name: Approval - Approve to Dev
+      controller_workflow_approval_template:
+        name: "Approve to Dev"
+        workflow_job_template: "{{ workflow_name }}"
+        timeout: 3600
+        description: "Approve promotion to {{ ns_dev }}"
+      register: appr_dev
+
+    - name: Link Summary -> Approve to Dev
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_summary.identifier }}"
+        success_nodes:
+          - "{{ appr_dev.identifier }}"
+
+    # --- Patch App (Dev)
+    - name: Node - Patch App DEV
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_patch_app }}"
+        extra_data:
+          target_ns: "{{ ns_dev }}"
+      register: node_patch_dev
+
+    - name: Link Approve to Dev -> Patch App DEV
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ appr_dev.identifier }}"
+        success_nodes:
+          - "{{ node_patch_dev.identifier }}"
+
+    # --- Approval before Stage
+    - name: Approval - Approve to Stage
+      controller_workflow_approval_template:
+        name: "Approve to Stage"
+        workflow_job_template: "{{ workflow_name }}"
+        timeout: 3600
+        description: "Approve promotion to {{ ns_stage }}"
+      register: appr_stage
+
+    - name: Link Patch App DEV -> Approve to Stage
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_patch_dev.identifier }}"
+        success_nodes:
+          - "{{ appr_stage.identifier }}"
+
+    # --- Patch App (Stage)
+    - name: Node - Patch App STAGE
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_patch_app }}"
+        extra_data:
+          target_ns: "{{ ns_stage }}"
+      register: node_patch_stage
+
+    - name: Link Approve to Stage -> Patch App STAGE
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ appr_stage.identifier }}"
+        success_nodes:
+          - "{{ node_patch_stage.identifier }}"
+
+    # --- Approval before Prod
+    - name: Approval - Approve to Prod
+      controller_workflow_approval_template:
+        name: "Approve to Prod"
+        workflow_job_template: "{{ workflow_name }}"
+        timeout: 3600
+        description: "Approve promotion to {{ ns_prod }}"
+      register: appr_prod
+
+    - name: Link Patch App STAGE -> Approve to Prod
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_patch_stage.identifier }}"
+        success_nodes:
+          - "{{ appr_prod.identifier }}"
+
+    # --- Patch App (Prod)
+    - name: Node - Patch App PROD
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "{{ jt_patch_app }}"
+        extra_data:
+          target_ns: "{{ ns_prod }}"
+      register: node_patch_prod
+
+    - name: Link Approve to Prod -> Patch App PROD
+      controller_workflow_job_template_node:
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ appr_prod.identifier }}"
+        success_nodes:
+          - "{{ node_patch_prod.identifier }}"
