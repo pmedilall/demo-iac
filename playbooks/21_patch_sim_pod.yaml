@@ -3,8 +3,9 @@
   gather_facts: false
   collections: [kubernetes.core]
   vars:
-    ns: demo-dev
+    ns: "{{ target_ns | default('demo-dev') }}"
     sim_pod: patch-sim
+    package: openssl             # change to demo any package
   tasks:
     - name: Create UBI test pod
       kubernetes.core.k8s:
@@ -12,10 +13,7 @@
         definition:
           apiVersion: v1
           kind: Pod
-          metadata:
-            name: "{{ sim_pod }}"
-            namespace: "{{ ns }}"
-            labels: { app: patch-sim }
+          metadata: { name: "{{ sim_pod }}", namespace: "{{ ns }}" }
           spec:
             restartPolicy: Never
             containers:
@@ -34,29 +32,30 @@
       retries: 30
       delay: 2
 
-    - name: Show current openssl rpm (before)
+    - name: Show {{ package }} version (before)
       kubernetes.core.k8s_exec:
         namespace: "{{ ns }}"
         pod: "{{ sim_pod }}"
-        command: ["rpm","-q","openssl"]
+        command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: rpm_before
 
-    - name: Update openssl (simulate remediation)
+    - name: Update {{ package }} (simulate remediation)
       kubernetes.core.k8s_exec:
         namespace: "{{ ns }}"
         pod: "{{ sim_pod }}"
-        command: ["bash","-lc","microdnf -y update openssl || dnf -y update openssl || true"]
+        command: ["bash","-lc","microdnf -y update {{ package }} || dnf -y update {{ package }} || true"]
 
-    - name: Show current openssl rpm (after)
+    - name: Show {{ package }} version (after)
       kubernetes.core.k8s_exec:
         namespace: "{{ ns }}"
         pod: "{{ sim_pod }}"
-        command: ["rpm","-q","openssl"]
+        command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: rpm_after
 
     - name: Print delta
       ansible.builtin.debug:
         msg: |
+          Namespace: {{ ns }}
           Before: {{ rpm_before.stdout }}
           After : {{ rpm_after.stdout }}
 
