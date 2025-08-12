@@ -4,7 +4,8 @@
   collections: [kubernetes.core]
   vars:
     app_name: airport-greeting-app
-    image_ref: "nginx:alpine"
+    # use an unprivileged image that listens on 8080
+    image_ref: "nginxinc/nginx-unprivileged:stable-alpine"
 
   pre_tasks:
     - name: Resolve target namespace with default
@@ -18,7 +19,9 @@
         definition:
           apiVersion: v1
           kind: ConfigMap
-          metadata: { name: "{{ app_name }}-web", namespace: "{{ ns }}" }
+          metadata:
+            name: "{{ app_name }}-web"
+            namespace: "{{ ns }}"
           data:
             index.html: |
               <!doctype html>
@@ -41,23 +44,37 @@
               </body>
               </html>
 
-    - name: Deployment
+    - name: Deployment (non-root, requests set)
       kubernetes.core.k8s:
         state: present
         definition:
           apiVersion: apps/v1
           kind: Deployment
-          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ ns }}"
           spec:
             replicas: 2
-            selector: { matchLabels: { app: "{{ app_name }}" } }
+            selector:
+              matchLabels: { app: "{{ app_name }}" }
             template:
-              metadata: { labels: { app: "{{ app_name }}" } }
+              metadata:
+                labels: { app: "{{ app_name }}" }
               spec:
+                securityContext:
+                  runAsNonRoot: true
                 containers:
                   - name: web
                     image: "{{ image_ref }}"
-                    ports: [{containerPort: 80}]
+                    ports:
+                      - containerPort: 8080
+                    resources:
+                      requests:
+                        cpu: "100m"
+                        memory: "128Mi"
+                      limits:
+                        cpu: "250m"
+                        memory: "256Mi"
                     volumeMounts:
                       - name: web
                         mountPath: /usr/share/nginx/html/index.html
@@ -67,16 +84,21 @@
                     configMap:
                       name: "{{ app_name }}-web"
 
-    - name: Service
+    - name: Service (target 8080)
       kubernetes.core.k8s:
         state: present
         definition:
           apiVersion: v1
           kind: Service
-          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ ns }}"
           spec:
             selector: { app: "{{ app_name }}" }
-            ports: [{ port: 80, targetPort: 80 }]
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
 
     - name: Route (OpenShift)
       kubernetes.core.k8s:
@@ -84,6 +106,10 @@
         definition:
           apiVersion: route.openshift.io/v1
           kind: Route
-          metadata: { name: "{{ app_name }}", namespace: "{{ ns }}" }
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ ns }}"
           spec:
-            to: { kind: Service, name: "{{ app_name }}" }
+            to:
+              kind: Service
+              name: "{{ app_name }}"
