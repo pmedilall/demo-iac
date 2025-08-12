@@ -1,4 +1,8 @@
 ---
+# Simulate "OS patching" inside a throwaway UBI pod
+# Works with EE: registry.redhat.io/ansible-automation-platform-24/ee-supported-rhel9
+# JT tip: prompt/extra var `target_ns` (default demo-dev)
+
 - hosts: localhost
   gather_facts: false
   collections: [kubernetes.core]
@@ -8,7 +12,7 @@
     package: openssl
 
   tasks:
-    - name: Create UBI test pod (with requests/limits)
+    - name: Create UBI test pod (non-root + requests/limits)
       kubernetes.core.k8s:
         state: present
         definition:
@@ -20,12 +24,13 @@
             labels: { app: patch-sim }
           spec:
             restartPolicy: Never
-            securityContext:
-              runAsNonRoot: true
             containers:
               - name: ubi
                 image: registry.access.redhat.com/ubi9/ubi
+                imagePullPolicy: IfNotPresent
                 command: ["sleep","3600"]
+                securityContext:
+                  runAsUser: 1001        # ensure non-root, avoids readiness issues
                 resources:
                   requests:
                     cpu: "100m"
@@ -34,7 +39,7 @@
                     cpu: "250m"
                     memory: "256Mi"
 
-    - name: Wait for pod Ready
+    - name: Wait for pod phase=Running
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
@@ -43,8 +48,21 @@
       register: podinfo
       until: >
         (podinfo.resources | length > 0) and
-        (podinfo.resources[0].status.containerStatuses is defined) and
-        (podinfo.resources[0].status.containerStatuses[0].ready | default(false))
+        (podinfo.resources[0].status.phase | default('') == 'Running')
+      retries: 30
+      delay: 2
+
+    - name: Wait for container Ready=true
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: "{{ sim_pod }}"
+        namespace: "{{ target_ns }}"
+      register: podready
+      until: >
+        (podready.resources | length > 0) and
+        (podready.resources[0].status.containerStatuses is defined) and
+        (podready.resources[0].status.containerStatuses[0].ready | default(false))
       retries: 30
       delay: 2
 
@@ -52,6 +70,7 @@
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
+        container: ubi
         command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: before
 
@@ -59,12 +78,14 @@
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
+        container: ubi
         command: ["bash","-lc","microdnf -y update {{ package }} || dnf -y update {{ package }} || true"]
 
     - name: Show {{ package }} version (after)
       kubernetes.core.k8s_exec:
         namespace: "{{ target_ns }}"
         pod: "{{ sim_pod }}"
+        container: ubi
         command: ["bash","-lc","rpm -q {{ package }} || true"]
       register: after
 
@@ -72,8 +93,8 @@
       ansible.builtin.debug:
         msg: |
           Namespace: {{ target_ns }}
-          Before: {{ before.stdout }}
-          After : {{ after.stdout }}
+          Before:    {{ before.stdout }}
+          After:     {{ after.stdout }}
 
     - name: Cleanup pod
       kubernetes.core.k8s:
